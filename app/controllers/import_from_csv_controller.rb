@@ -7,7 +7,7 @@ class ImportFromCsvController < ApplicationController
   require 'csv'
 
   @@required_fields = [:author, :subject, :tracker]
-  @@optional_fields = [:description, :assignee, :estimated_hours, :status]
+  @@optional_fields = [:description, :assignee, :estimated_hours, :status, :start_date, :due_date]
   @@standard_fields = @@required_fields.concat @@optional_fields
   @@standard_field_headings = Hash[@@standard_fields.map { |f| [f, f.to_s.sub('_', ' ')] }]
 
@@ -47,7 +47,9 @@ class ImportFromCsvController < ApplicationController
         invalid_custom_field_headings = custom_field_headings.keys.select do |h|
           custom_fields = IssueCustomField.where('lower(name) = ?', h.downcase)
 
-          custom_fields.none? or custom_fields.first.projects.exclude? @project
+          unless custom_fields.none?
+            not (custom_fields.first.is_for_all? or custom_fields.first.projects.include? @project)
+          end
         end
 
         if invalid_custom_field_headings.any?
@@ -111,6 +113,14 @@ class ImportFromCsvController < ApplicationController
             issue.estimated_hours= row[standard_headings[:estimated_hours]].to_f
           end
 
+          unless standard_headings[:start_date].nil?
+            issue.start_date = row[standard_headings[:start_date]]
+          end
+
+          unless standard_headings[:due_date].nil?
+            issue.due_date = row[standard_headings[:due_date]]
+          end
+
           custom_fields = custom_field_headings.map { |col_index, field_id| {id: field_id, value: row[col_index]} }
           issue.custom_fields = custom_fields.select { |f| not f[:value].blank? }
 
@@ -155,6 +165,8 @@ class ImportFromCsvController < ApplicationController
     heading_row = heading_row.map { |h| h.downcase }
     headings = {standard: {}}
 
+    headings[:standard][:start_date] = heading_row.index(@@standard_field_headings[:start_date])
+    headings[:standard][:due_date] = heading_row.index(@@standard_field_headings[:due_date])
     headings[:standard][:subject] = heading_row.index(@@standard_field_headings[:subject])
     headings[:standard][:description] = heading_row.index(@@standard_field_headings[:description])
     headings[:standard][:status] = heading_row.index(@@standard_field_headings[:status])
