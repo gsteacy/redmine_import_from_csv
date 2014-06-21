@@ -6,6 +6,11 @@ class ImportFromCsvController < ApplicationController
 
   require 'csv'
 
+  @@required_fields = [:author, :subject, :tracker]
+  @@optional_fields = [:description, :assignee, :estimated_hours, :status]
+  @@standard_fields = @@required_fields.concat @@optional_fields
+  @@standard_field_headings = Hash[@@standard_fields.map { |f| [f, f.to_s.sub('_', ' ')] }]
+
   def index
     respond_to do |format|
       format.html
@@ -13,8 +18,8 @@ class ImportFromCsvController < ApplicationController
   end
 
   def csv_import
-    if params[:dump][:file].blank?
-      error = 'Please, Select CSV file'
+    if params[:dump].blank? or params[:dump][:file].blank?
+      error = 'Please select a CSV file.'
       redirect_with_error error, @project
     else
       begin
@@ -24,17 +29,36 @@ class ImportFromCsvController < ApplicationController
         parsed_file = CSV.parse(infile)
 
         if parsed_file.none?
-          redirect_with_error('CSV is empty', @project)
+          redirect_with_error('CSV is empty.', @project)
           return
         end
 
         headings = map_headings parsed_file.shift
-        mandatory_headings = [:author, :subject, :tracker]
-        missing_headings = headings.select { |k, v| v.nil? and mandatory_headings.include? k }.keys
+        missing_fields = headings.select { |k, v| v.nil? and @@required_fields.include? k }.keys
 
-        if missing_headings.any?
-          redirect_with_error("Missing mandatory headings: #{missing_headings.map { |h| h.capitalize }.join ', '}", @project)
+        if missing_fields.any?
+          redirect_with_error("Missing required fields: #{missing_fields.map { |h| h.capitalize }.join ', '}", @project)
           return
+        end
+
+        standard_headings = headings[:standard]
+        custom_field_headings = headings[:custom]
+
+        invalid_custom_field_headings = custom_field_headings.keys.select do |h|
+          custom_fields = IssueCustomField.where('lower(name) = ?', h.downcase)
+
+          custom_fields.none? or custom_fields.first.projects.exclude? @project
+        end
+
+        if invalid_custom_field_headings.any?
+          error = 'These issue custom fields are invalid or not assigned to project: '
+          error << invalid_custom_field_headings.map { |h| h.capitalize }.join(', ')
+          redirect_with_error(error, @project)
+          return
+        end
+
+        custom_field_headings = custom_field_headings.map do |h, i|
+          [i, IssueCustomField.where('lower(name) = ?', h.downcase).first.id]
         end
 
         parsed_file.each_with_index do |row, index|
@@ -44,7 +68,7 @@ class ImportFromCsvController < ApplicationController
           issue = Issue.new
           issue.project = @project
 
-          author = row[headings[:author]]
+          author = row[standard_headings[:author]]
           issue.author = get_user author
 
           if issue.author.nil?
@@ -52,7 +76,7 @@ class ImportFromCsvController < ApplicationController
             invalid = true
           end
 
-          tracker = row[headings[:tracker]]
+          tracker = row[standard_headings[:tracker]]
           issue.tracker = @project.trackers.find_by_name tracker
 
           if issue.tracker.nil?
@@ -60,10 +84,10 @@ class ImportFromCsvController < ApplicationController
             invalid = true
           end
 
-          issue.subject = row[headings[:subject]]
-          issue.description = row[headings[:description]]
+          issue.subject = row[standard_headings[:subject]]
+          issue.description = row[standard_headings[:description]]
 
-          status = row[headings[:status]]
+          status = row[standard_headings[:status]]
           issue.status = IssueStatus.find_by_name status
 
           if issue.status.nil?
@@ -75,7 +99,7 @@ class ImportFromCsvController < ApplicationController
             end
           end
 
-          assignee = row[headings[:assignee]]
+          assignee = row[standard_headings[:assignee]]
           issue.assigned_to = get_user assignee unless assignee.nil?
 
           if issue.assigned_to.nil? and !assignee.nil?
@@ -83,13 +107,21 @@ class ImportFromCsvController < ApplicationController
             invalid = true
           end
 
-          issue.estimated_hours=row[headings[:estimated_hours]].to_f
+          unless standard_headings[:estimated_hours].nil?
+            issue.estimated_hours= row[standard_headings[:estimated_hours]].to_f
+          end
+
+          custom_fields = custom_field_headings.map { |col_index, field_id| {id: field_id, value: row[col_index]} }
+          issue.custom_fields = custom_fields.select { |f| not f[:value].blank? }
 
           unless invalid
             if issue.save
               done = done+1
             else
-              error_messages << "Line #{index+1}: #{issue.errors.full_messages.uniq.join(', ')}"
+              save_error_messages = issue.errors.full_messages.uniq.map do |m|
+                m.sub('is not included in the list', 'has an invalid value')
+              end
+              error_messages << "Line #{index+1}: #{save_error_messages.join(', ')}"
             end
           end
         end
@@ -121,15 +153,19 @@ class ImportFromCsvController < ApplicationController
 
   def map_headings(heading_row)
     heading_row = heading_row.map { |h| h.downcase }
-    headings = {}
+    headings = {standard: {}}
 
-    headings[:subject] = heading_row.index('subject')
-    headings[:description] = heading_row.index('description')
-    headings[:status] = heading_row.index('status')
-    headings[:tracker] = heading_row.index('tracker')
-    headings[:author] = heading_row.index('author')
-    headings[:assignee] = heading_row.index('assignee')
-    headings[:estimated_hours] = heading_row.index('estimated hours')
+    headings[:standard][:subject] = heading_row.index(@@standard_field_headings[:subject])
+    headings[:standard][:description] = heading_row.index(@@standard_field_headings[:description])
+    headings[:standard][:status] = heading_row.index(@@standard_field_headings[:status])
+    headings[:standard][:tracker] = heading_row.index(@@standard_field_headings[:tracker])
+    headings[:standard][:author] = heading_row.index(@@standard_field_headings[:author])
+    headings[:standard][:assignee] = heading_row.index(@@standard_field_headings[:assignee])
+    headings[:standard][:estimated_hours] = heading_row.index(@@standard_field_headings[:estimated_hours])
+
+    custom_field_headings = heading_row.select { |h| @@standard_field_headings.values.exclude? h }
+
+    headings[:custom] = Hash[custom_field_headings.map { |h| [h, heading_row.index(h)] }]
 
     headings
   end
