@@ -16,9 +16,6 @@ class ImportFromCsvController < ApplicationController
     if params[:dump][:file].blank?
       error = 'Please, Select CSV file'
       redirect_with_error error, @project
-    elsif params[:dump][:daily_working_hrs].blank?
-      error = 'Please enter Expected daily working hours'
-      redirect_with_error error, @project
     else
       begin
         done = 0; total = 0
