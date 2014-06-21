@@ -7,7 +7,7 @@ class ImportFromCsvController < ApplicationController
   require 'csv'
 
   @@required_fields = [:author, :subject, :tracker]
-  @@optional_fields = [:description, :assignee, :estimated_hours, :status, :start_date, :due_date]
+  @@optional_fields = [:description, :assignee, :estimated_hours, :status, :start_date, :due_date, :priority]
   @@standard_fields = @@required_fields.concat @@optional_fields
   @@standard_field_headings = Hash[@@standard_fields.map { |f| [f, f.to_s.sub('_', ' ')] }]
 
@@ -34,7 +34,7 @@ class ImportFromCsvController < ApplicationController
         end
 
         headings = map_headings parsed_file.shift
-        missing_fields = headings.select { |k, v| v.nil? and @@required_fields.include? k }.keys
+        missing_fields = headings.select { |k, v| v.blank? and @@required_fields.include? k }.keys
 
         if missing_fields.any?
           redirect_with_error("Missing required fields: #{missing_fields.map { |h| h.capitalize }.join ', '}", @project)
@@ -70,10 +70,15 @@ class ImportFromCsvController < ApplicationController
           issue = Issue.new
           issue.project = @project
 
+          # Required fields
+
+          issue.subject = row[standard_headings[:subject]]
+          issue.description = row[standard_headings[:description]]
+
           author = row[standard_headings[:author]]
           issue.author = get_user author
 
-          if issue.author.nil?
+          if issue.author.blank?
             error_messages << "Line #{index+1}: User '#{author}' is not a member of the project"
             invalid = true
           end
@@ -81,48 +86,64 @@ class ImportFromCsvController < ApplicationController
           tracker = row[standard_headings[:tracker]]
           issue.tracker = @project.trackers.find_by_name tracker
 
-          if issue.tracker.nil?
+          if issue.tracker.blank?
             error_messages << "Line #{index+1}: Tracker '#{tracker}' is invalid or not assigned to this project"
             invalid = true
           end
-
-          issue.subject = row[standard_headings[:subject]]
-          issue.description = row[standard_headings[:description]]
-
-          status = row[standard_headings[:status]]
-          issue.status = IssueStatus.find_by_name status
-
-          if issue.status.nil?
-            if status.blank?
-              issue.status = IssueStatus.default
-            else
-              error_messages << "Line #{index+1}: Status '#{status}' is invalid"
-              invalid = true
-            end
-          end
-
           assignee = row[standard_headings[:assignee]]
-          issue.assigned_to = get_user assignee unless assignee.nil?
+          issue.assigned_to = get_user assignee unless assignee.blank?
 
-          if issue.assigned_to.nil? and !assignee.nil?
+          if issue.assigned_to.blank? and !assignee.blank?
             error_messages << "Line #{index+1}: User '#{assignee}' is not a member of the project"
             invalid = true
           end
 
-          unless standard_headings[:estimated_hours].nil?
+          # Optional fields
+
+          unless standard_headings[:estimated_hours].blank?
             issue.estimated_hours= row[standard_headings[:estimated_hours]].to_f
           end
 
-          unless standard_headings[:start_date].nil?
+          unless standard_headings[:start_date].blank?
             issue.start_date = row[standard_headings[:start_date]]
           end
 
-          unless standard_headings[:due_date].nil?
+          unless standard_headings[:due_date].blank?
             issue.due_date = row[standard_headings[:due_date]]
           end
 
+          # Priority and status both have optional default values, so we'll use
+          # those if the value is invalid, or give an error if no default exists
+
+          unless standard_headings[:priority].blank?
+            priority = IssuePriority.find_by_name(row[standard_headings[:priority]]) || IssuePriority.default
+
+            if priority.blank?
+              error_messages << "Line #{index+1}: Priority '#{row[standard_headings[:priority]] }' is invalid and no default is set"
+              invalid = true
+            else
+              issue.priority = priority
+            end
+          end
+
+          unless standard_headings[:status].blank?
+            status = IssueStatus.find_by_name(row[standard_headings[:status]]) || IssueStatus.default
+
+            if status.blank?
+              error_messages << "Line #{index+1}: Status '#{row[standard_headings[:status]] }' is invalid and no default is set"
+              invalid = true
+            else
+              issue.status = status
+            end
+          end
+
+          # Custom fields
+
           custom_fields = custom_field_headings.map { |col_index, field_id| {id: field_id, value: row[col_index]} }
           issue.custom_fields = custom_fields.select { |f| not f[:value].blank? }
+
+          # Don't save if we consider the issue invalid, even if it would technically save ok.
+          # We want to avoid unexpected results where it make sense to do so.
 
           unless invalid
             if issue.save
@@ -136,6 +157,7 @@ class ImportFromCsvController < ApplicationController
           end
         end
       end
+
       if done == total
         flash[:notice]="CSV Import Successful, #{done} new issues have been created"
       else
@@ -158,7 +180,7 @@ class ImportFromCsvController < ApplicationController
 
   def get_user(username)
     member = @project.members.joins(:user).where('users.login' => username).first
-    member.user unless member.nil?
+    member.user unless member.blank?
   end
 
   def map_headings(heading_row)
@@ -174,6 +196,7 @@ class ImportFromCsvController < ApplicationController
     headings[:standard][:author] = heading_row.index(@@standard_field_headings[:author])
     headings[:standard][:assignee] = heading_row.index(@@standard_field_headings[:assignee])
     headings[:standard][:estimated_hours] = heading_row.index(@@standard_field_headings[:estimated_hours])
+    headings[:standard][:priority] = heading_row.index(@@standard_field_headings[:priority])
 
     custom_field_headings = heading_row.select { |h| @@standard_field_headings.values.exclude? h }
 
