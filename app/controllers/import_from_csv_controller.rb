@@ -132,7 +132,7 @@ class ImportFromCsvController < ApplicationController
             end
           end
 
-          unless standard_headings[:version].blank?
+          unless standard_headings[:version].blank? or row[standard_headings[:version]].blank?
             version = @project.versions.find_by_name(row[standard_headings[:version]])
 
             if version.blank?
@@ -153,20 +153,20 @@ class ImportFromCsvController < ApplicationController
 
           unless invalid
             if issue.save
-              if standard_headings[:created].present?
+              if standard_headings[:created].present? and row[standard_headings[:created]].present?
                 # Must set this after first saving otherwise auto timestamps will override it
                 issue.created_on = row[standard_headings[:created]]
 
                 if issue.save
                   @done += 1
                 else
-                  add_save_errors issue
+                  add_save_errors issue, index
                 end
               else
                 @done += 1
               end
             else
-              add_save_errors issue
+              add_save_errors issue, index
             end
           end
         end
@@ -182,7 +182,7 @@ class ImportFromCsvController < ApplicationController
     end
   end
 
-  def add_save_errors(issue)
+  def add_save_errors(issue, index)
     save_error_messages = issue.errors.full_messages.uniq.map do |m|
       m.sub('is not included in the list', 'has an invalid value')
     end
