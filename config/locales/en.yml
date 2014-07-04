@@ -4,4 +4,4 @@ en:
   error_bad_csv_format: "Bad file format"
   format_hint: "The first line of the file should contain field names. Field names are case-insensitive. Values are case sensitive. Dates must be in the format YYYY-MM-DD."
   required_fields: "Mandatory fields: Subject, Tracker, Author"
-  optional_fields: "Optional fields: Description, Assignee, Status, Start Date, Due Date, Priority. Status and Priority will be set to the default if not specified or if an invalid value is given, unless the default has not been set."
+  optional_fields: "Optional fields: Description, Assignee, Status, Start Date, Due Date, Priority, Version, Created. Status and Priority will be set to the default if not specified or if an invalid value is given, unless the default has not been set."

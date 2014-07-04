@@ -7,7 +7,7 @@ class ImportFromCsvController < ApplicationController
   require 'csv'
 
   @@required_fields = [:author, :subject, :tracker]
-  @@optional_fields = [:description, :assignee, :estimated_hours, :status, :start_date, :due_date, :priority]
+  @@optional_fields = [:description, :assignee, :estimated_hours, :status, :start_date, :due_date, :priority, :created, :version]
   @@standard_fields = @@required_fields.concat @@optional_fields
   @@standard_field_headings = Hash[@@standard_fields.map { |f| [f, f.to_s.sub('_', ' ')] }]
 
@@ -45,10 +45,7 @@ class ImportFromCsvController < ApplicationController
 
         invalid_custom_field_headings = custom_field_headings.keys.select do |h|
           custom_fields = IssueCustomField.where('lower(name) = ?', h.downcase)
-
-          unless custom_fields.none?
-            not (custom_fields.first.is_for_all? or custom_fields.first.projects.include? @project)
-          end
+          custom_fields.none? or not (custom_fields.first.is_for_all? or custom_fields.first.projects.include? @project)
         end
 
         if invalid_custom_field_headings.any?
@@ -135,6 +132,17 @@ class ImportFromCsvController < ApplicationController
             end
           end
 
+          unless standard_headings[:version].blank?
+            version = @project.versions.find_by_name(row[standard_headings[:version]])
+
+            if version.blank?
+              @error_messages << [index+1, "Version '#{row[standard_headings[:version]] }' is invalid"]
+              invalid = true
+            else
+              issue.fixed_version = version
+            end
+          end
+
           # Custom fields
 
           custom_fields = custom_field_headings.map { |col_index, field_id| {id: field_id, value: row[col_index]} }
@@ -145,12 +153,20 @@ class ImportFromCsvController < ApplicationController
 
           unless invalid
             if issue.save
-              @done += 1
-            else
-              save_error_messages = issue.errors.full_messages.uniq.map do |m|
-                m.sub('is not included in the list', 'has an invalid value')
+              if standard_headings[:created].present?
+                # Must set this after first saving otherwise auto timestamps will override it
+                issue.created_on = row[standard_headings[:created]]
+
+                if issue.save
+                  @done += 1
+                else
+                  add_save_errors issue
+                end
+              else
+                @done += 1
               end
-              @error_messages << [index+1, "#{save_error_messages.join(', ')}"]
+            else
+              add_save_errors issue
             end
           end
         end
@@ -158,15 +174,19 @@ class ImportFromCsvController < ApplicationController
 
       if @done == @total
         flash[:notice]="CSV Import Successful, #{@done} new issues have been created"
-        redirect_to issues_path, project_id: @project.identifier
+        redirect_to project_issues_path
       else
         @error_messages.uniq! { |err| err[1] } # Remove duplicate errors
         render :index
       end
     end
+  end
 
-  rescue StandardError => ex
-    render_fatal_error ex.message
+  def add_save_errors(issue)
+    save_error_messages = issue.errors.full_messages.uniq.map do |m|
+      m.sub('is not included in the list', 'has an invalid value')
+    end
+    @error_messages << [index+1, "#{save_error_messages.join(', ')}"]
   end
 
   def render_fatal_error(err)
@@ -199,6 +219,8 @@ class ImportFromCsvController < ApplicationController
     headings[:standard][:assignee] = heading_row.index(@@standard_field_headings[:assignee])
     headings[:standard][:estimated_hours] = heading_row.index(@@standard_field_headings[:estimated_hours])
     headings[:standard][:priority] = heading_row.index(@@standard_field_headings[:priority])
+    headings[:standard][:version] = heading_row.index(@@standard_field_headings[:version])
+    headings[:standard][:created] = heading_row.index(@@standard_field_headings[:created])
 
     custom_field_headings = heading_row.select { |h| @@standard_field_headings.values.exclude? h }
 
