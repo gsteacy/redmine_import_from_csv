@@ -1,6 +1,6 @@
 <%= form_for :dump, :url => csv_import_import_from_csv_index_path,
              :html => {:multipart => true, :id => "my-form"} do |f| %>
-    <% if @error_messages.any? %>
+    <% unless @error_messages.nil? or @error_messages.none? %>
         <div id="errorExplanation">
           <%= "#{@done} out of #{@total} new issues have been created" %>
           <ul>
