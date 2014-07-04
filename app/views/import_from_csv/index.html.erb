@@ -1,9 +1,17 @@
 <%= form_for :dump, :url => csv_import_import_from_csv_index_path,
              :html => {:multipart => true, :id => "my-form"} do |f| %>
-    <input type="hidden" name="project_id" value="<%= @project.id %>"/>
+    <% if @error_messages.any? %>
+        <div id="errorExplanation">
+          <%= "#{@done} out of #{@total} new issues have been created" %>
+          <ul>
+            <% @error_messages.each do |err| %>
+                <li><%= "Line #{err[0]}: #{err[1]}" %></li>
+            <% end %>
+          </ul>
+        </div>
+    <% end %>
     <fieldset>
       <label for="dump_file"><h2>Select a CSV File :</h2></label>
-
       <p><%= f.file_field :file %></p>
       <p><%= submit_tag 'Import' %></p>
       <p><%= l :format_hint %></p>

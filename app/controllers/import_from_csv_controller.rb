@@ -18,27 +18,26 @@ class ImportFromCsvController < ApplicationController
   end
 
   def csv_import
+    @error_messages = []
+    @done = 0
+    @total = 0
+
     if params[:dump].blank? or params[:dump][:file].blank?
-      error = 'Please select a CSV file.'
-      redirect_with_error error, @project
+      render_fatal_error 'Please select a CSV file.'
     else
       begin
-        done = 0; total = 0
-        error_messages = []
         infile = params[:dump][:file].read
         parsed_file = CSV.parse(infile)
 
         if parsed_file.none?
-          redirect_with_error('CSV is empty.', @project)
-          return
+          render_fatal_error 'CSV is empty.' and return
         end
 
         headings = map_headings parsed_file.shift
         missing_fields = headings.select { |k, v| v.blank? and @@required_fields.include? k }.keys
 
         if missing_fields.any?
-          redirect_with_error("Missing required fields: #{missing_fields.map { |h| h.capitalize }.join ', '}", @project)
-          return
+          render_fatal_error "Missing required fields: #{missing_fields.map { |h| h.capitalize }.join ', '}" and return
         end
 
         standard_headings = headings[:standard]
@@ -55,8 +54,7 @@ class ImportFromCsvController < ApplicationController
         if invalid_custom_field_headings.any?
           error = 'These issue custom fields are invalid or not assigned to project: '
           error << invalid_custom_field_headings.map { |h| h.capitalize }.join(', ')
-          redirect_with_error(error, @project)
-          return
+          render_fatal_error error and return
         end
 
         custom_field_headings = custom_field_headings.map do |h, i|
@@ -65,7 +63,7 @@ class ImportFromCsvController < ApplicationController
 
         parsed_file.each_with_index do |row, index|
           invalid = false
-          total = total+1
+          @total += 1
 
           issue = Issue.new
           issue.project = @project
@@ -79,7 +77,7 @@ class ImportFromCsvController < ApplicationController
           issue.author = get_user author
 
           if issue.author.blank?
-            error_messages << "Line #{index+1}: User '#{author}' is not a member of the project"
+            @error_messages << [index+1, "User '#{author}' is not a member of the project"]
             invalid = true
           end
 
@@ -87,14 +85,14 @@ class ImportFromCsvController < ApplicationController
           issue.tracker = @project.trackers.find_by_name tracker
 
           if issue.tracker.blank?
-            error_messages << "Line #{index+1}: Tracker '#{tracker}' is invalid or not assigned to this project"
+            @error_messages << [index+1, "Tracker '#{tracker}' is invalid or not assigned to this project"]
             invalid = true
           end
           assignee = row[standard_headings[:assignee]]
           issue.assigned_to = get_user assignee unless assignee.blank?
 
           if issue.assigned_to.blank? and !assignee.blank?
-            error_messages << "Line #{index+1}: User '#{assignee}' is not a member of the project"
+            @error_messages << [index+1, "User '#{assignee}' is not a member of the project"]
             invalid = true
           end
 
@@ -119,7 +117,7 @@ class ImportFromCsvController < ApplicationController
             priority = IssuePriority.find_by_name(row[standard_headings[:priority]]) || IssuePriority.default
 
             if priority.blank?
-              error_messages << "Line #{index+1}: Priority '#{row[standard_headings[:priority]] }' is invalid and no default is set"
+              @error_messages << [index+1, "Priority '#{row[standard_headings[:priority]] }' is invalid and no default is set"]
               invalid = true
             else
               issue.priority = priority
@@ -130,7 +128,7 @@ class ImportFromCsvController < ApplicationController
             status = IssueStatus.find_by_name(row[standard_headings[:status]]) || IssueStatus.default
 
             if status.blank?
-              error_messages << "Line #{index+1}: Status '#{row[standard_headings[:status]] }' is invalid and no default is set"
+              @error_messages << [index+1, "Status '#{row[standard_headings[:status]] }' is invalid and no default is set"]
               invalid = true
             else
               issue.status = status
@@ -147,29 +145,33 @@ class ImportFromCsvController < ApplicationController
 
           unless invalid
             if issue.save
-              done = done+1
+              @done += 1
             else
               save_error_messages = issue.errors.full_messages.uniq.map do |m|
                 m.sub('is not included in the list', 'has an invalid value')
               end
-              error_messages << "Line #{index+1}: #{save_error_messages.join(', ')}"
+              @error_messages << [index+1, "#{save_error_messages.join(', ')}"]
             end
           end
         end
       end
 
-      if done == total
-        flash[:notice]="CSV Import Successful, #{done} new issues have been created"
+      if @done == @total
+        flash[:notice]="CSV Import Successful, #{@done} new issues have been created"
+        redirect_to issues_path, project_id: @project.identifier
       else
-        flash[:error]=format_error(done, total, error_messages)
+        @error_messages.uniq! { |err| err[1] } # Remove duplicate errors
+        render :index
       end
-      redirect_to :controller => "issues", :action => "index", :project_id => @project.identifier
     end
+
+  rescue StandardError => ex
+    render_fatal_error ex.message
   end
 
-  def redirect_with_error(err, project)
-    flash[:error]=err
-    redirect_to :controller => "import_from_csv", :action => "index", :project_id => project.identifier
+  def render_fatal_error(err)
+    @error_messages = [[0, err]]
+    render :index
   end
 
   def get_project
