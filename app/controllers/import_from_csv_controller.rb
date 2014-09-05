@@ -7,7 +7,7 @@ class ImportFromCsvController < ApplicationController
   require 'csv'
 
   @@required_fields = [:author, :subject, :tracker]
-  @@optional_fields = [:description, :assignee, :estimated_hours, :status, :start_date, :due_date, :priority, :created, :version]
+  @@optional_fields = [:description, :assignee, :estimated_hours, :status, :start_date, :due_date, :priority, :created, :version, :parent]
   @@standard_fields = @@required_fields.concat @@optional_fields
   @@standard_field_headings = Hash[@@standard_fields.map { |f| [f, f.to_s.sub('_', ' ')] }]
 
@@ -68,7 +68,6 @@ class ImportFromCsvController < ApplicationController
           # Required fields
 
           issue.subject = row[standard_headings[:subject]]
-          issue.description = row[standard_headings[:description]]
 
           author = row[standard_headings[:author]]
           issue.author = get_user author
@@ -85,18 +84,36 @@ class ImportFromCsvController < ApplicationController
             @error_messages << [index+1, "Tracker '#{tracker}' is invalid or not assigned to this project"]
             invalid = true
           end
-          assignee = row[standard_headings[:assignee]]
-          issue.assigned_to = get_user assignee unless assignee.blank?
-
-          if issue.assigned_to.blank? and !assignee.blank?
-            @error_messages << [index+1, "User '#{assignee}' is not a member of the project"]
-            invalid = true
-          end
 
           # Optional fields
 
+          unless standard_headings[:parent].blank?
+            parent = Issue.find_by_id(row[standard_headings[:parent]].tr('#', ''))
+
+            if parent.nil?
+              @error_messages << [index+1, "Parent issue ##{row[standard_headings[:parent]] } does not exist"]
+              invalid = true
+            else
+              issue.parent_issue_id = parent.id
+            end
+          end
+
+          unless standard_headings[:assignee].blank?
+            assignee = row[standard_headings[:assignee]]
+            issue.assigned_to = get_user assignee unless assignee.blank?
+
+            if issue.assigned_to.blank? and !assignee.blank?
+              @error_messages << [index+1, "User '#{assignee}' is not a member of the project"]
+              invalid = true
+            end
+          end
+
+          unless standard_headings[:description].blank?
+            issue.description = row[standard_headings[:description]]
+          end
+
           unless standard_headings[:estimated_hours].blank?
-            issue.estimated_hours= row[standard_headings[:estimated_hours]].to_f
+            issue.estimated_hours = row[standard_headings[:estimated_hours]].to_f
           end
 
           unless standard_headings[:start_date].blank?
@@ -221,6 +238,7 @@ class ImportFromCsvController < ApplicationController
     headings[:standard][:priority] = heading_row.index(@@standard_field_headings[:priority])
     headings[:standard][:version] = heading_row.index(@@standard_field_headings[:version])
     headings[:standard][:created] = heading_row.index(@@standard_field_headings[:created])
+    headings[:standard][:parent] = heading_row.index(@@standard_field_headings[:parent])
 
     custom_field_headings = heading_row.select { |h| @@standard_field_headings.values.exclude? h }
 
