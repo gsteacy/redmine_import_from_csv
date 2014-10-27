@@ -26,7 +26,8 @@ class ImportFromCsvController < ApplicationController
       render_fatal_error 'Please select a CSV file.'
     else
       begin
-        infile = params[:dump][:file].read
+        infile = params[:dump][:file].read.force_encoding 'UTF-8'
+        infile.encode!("UTF-8", 'binary', :invalid => :replace, :undef => :replace, :replace => '') unless infile.valid_encoding?
         parsed_file = CSV.parse(infile)
 
         if parsed_file.none?
